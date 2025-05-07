@@ -118,6 +118,7 @@ from sglang.srt.utils import (
     is_hip,
 )
 
+import nvtx
 _is_hip = is_hip()
 _is_cuda = is_cuda()
 
@@ -331,6 +332,7 @@ class DeepseekV2MoE(nn.Module):
                 self._create_deepep_dispatcher(config) for i in range(2)
             ]
 
+    @nvtx.annotate("create_deepep_dispatcher", color="red")
     def _create_deepep_dispatcher(self, config):
         return DeepEPDispatcher(
             group=parallel_state.get_tp_group().device_group,
@@ -346,6 +348,7 @@ class DeepseekV2MoE(nn.Module):
             return_recv_hook=True,
         )
 
+    @nvtx.annotate("forward", color="red")
     def forward(
         self, hidden_states: torch.Tensor, forward_mode: Optional[ForwardMode] = None
     ) -> torch.Tensor:
@@ -368,6 +371,7 @@ class DeepseekV2MoE(nn.Module):
             final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
         return final_hidden_states
 
+    @nvtx.annotate("forward_deepep", color="red")
     def forward_deepep(
         self, hidden_states: torch.Tensor, forward_mode: ForwardMode
     ) -> torch.Tensor:
@@ -423,6 +427,7 @@ class DeepseekV2MoE(nn.Module):
 
         return final_hidden_states
 
+    @nvtx.annotate("forward_deepep_shared_output", color="red")
     def _forward_deepep_shared_output(self, forward_mode, hidden_states):
         if (
             forward_mode is not None
@@ -433,6 +438,7 @@ class DeepseekV2MoE(nn.Module):
             return self.shared_experts(hidden_states)
         return None
 
+    @nvtx.annotate("forward_deepep_dispatch_a", color="red")
     def _forward_deepep_dispatch_a(
         self, chosen_deepep_dispatcher, forward_mode, hidden_states, router_logits
     ):
@@ -471,6 +477,7 @@ class DeepseekV2MoE(nn.Module):
         )
 
     # TODO hacky, refactor
+    @nvtx.annotate("forward_deepep_dispatch_a_part_one", color="red")
     def _forward_deepep_dispatch_a_part_one(
         self, forward_mode, hidden_states, router_logits
     ):
@@ -507,6 +514,7 @@ class DeepseekV2MoE(nn.Module):
 
         return topk_weights, topk_idx
 
+    @nvtx.annotate("forward_deepep_dispatch_a_part_two", color="red")
     def _forward_deepep_dispatch_a_part_two(
         self,
         chosen_deepep_dispatcher,
@@ -523,10 +531,11 @@ class DeepseekV2MoE(nn.Module):
         )
 
     # ----------------------------------------- TBO-related --------------------------------------------
-
+    @nvtx.annotate("forward_tbo_op_gate", color="red")
     def _forward_tbo_op_gate(self, state):
         state.router_logits = self.gate(state.hidden_states_after_post_attn_ln)
 
+    @nvtx.annotate("forward_tbo_op_mlp", color="red")
     def _forward_tbo_op_mlp(self, state):
         state.expert_output_hidden_states = self.experts(
             hidden_states=state.pop("hidden_states_from_dispatch"),
@@ -542,6 +551,7 @@ class DeepseekV2MoE(nn.Module):
             forward_mode=state.forward_batch.forward_mode,
         )
 
+    @nvtx.annotate("forward_tbo_op_dispatch_a_part_one", color="red")
     def _forward_tbo_op_dispatch_a_part_one(self, state):
         state.topk_weights, state.topk_idx = self._forward_deepep_dispatch_a_part_one(
             forward_mode=state.forward_batch.forward_mode,
@@ -549,6 +559,7 @@ class DeepseekV2MoE(nn.Module):
             router_logits=state.pop("router_logits"),
         )
 
+    @nvtx.annotate("forward_tbo_op_dispatch_a_part_two", color="red")
     def _forward_tbo_op_dispatch_a_part_two(self, state):
         self._forward_deepep_dispatch_a_part_two(
             chosen_deepep_dispatcher=self.tbo_deepep_dispatchers[
@@ -560,6 +571,7 @@ class DeepseekV2MoE(nn.Module):
             topk_weights=state.pop("topk_weights"),
         )
 
+    @nvtx.annotate("forward_tbo_op_dispatch_b", color="red")
     def _forward_tbo_op_dispatch_b(self, state, tbo_child_index: int):
         dispatcher = self.tbo_deepep_dispatchers[state.tbo_subbatch_index]
         with get_global_expert_distribution_recorder().with_current_layer(
@@ -578,6 +590,7 @@ class DeepseekV2MoE(nn.Module):
                 state.expected_m_from_dispatch,
             ) = dispatcher.dispatch_b()
 
+    @nvtx.annotate("forward_tbo_op_combine_a", color="red")
     def _forward_tbo_op_combine_a(self, state):
         self.tbo_deepep_dispatchers[state.tbo_subbatch_index].combine_a(
             hidden_states=state.pop("expert_output_hidden_states"),
@@ -586,6 +599,7 @@ class DeepseekV2MoE(nn.Module):
             forward_mode=state.forward_batch.forward_mode,
         )
 
+    @nvtx.annotate("forward_tbo_op_combine_b", color="red")
     def _forward_tbo_op_combine_b(self, state):
         dispatcher = self.tbo_deepep_dispatchers[state.tbo_subbatch_index]
         hidden_states = dispatcher.combine_b()
@@ -593,6 +607,7 @@ class DeepseekV2MoE(nn.Module):
         # state.hidden_states_from_combine = hidden_states
         state.hidden_states_from_combine_without_scaling = hidden_states
 
+    @nvtx.annotate("forward_tbo_op_shared", color="red")
     def _forward_tbo_op_shared(self, state):
         if get_bool_env_var("SGLANG_HACK_SLOW_BETWEEN_COMMUNICATION", "false"):
             for i in range(3):
@@ -603,6 +618,7 @@ class DeepseekV2MoE(nn.Module):
             state.pop("hidden_states_after_post_attn_ln"),
         )
 
+    @nvtx.annotate("forward_shared_experts", color="red")
     def _forward_shared_experts(self, hidden_states):
         if self.n_share_experts_fusion == 0:
             return self.shared_experts(hidden_states)
@@ -1707,6 +1723,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         #     f"hi [{get_tensor_model_parallel_rank()}, {self.layer_id}] _forward_tbo_op_input_layernorm start {forward_batch.input_ids.shape=} {hidden_states.shape=}")
 
         # TODO adhoc code, avoid copy-pasting these
+        nvtx.push_range(f"input_layernorm {hidden_states.shape=}")
         if hidden_states.shape[0] == 0:
             residual = hidden_states
         else:
@@ -1737,8 +1754,9 @@ class DeepseekV2DecoderLayer(nn.Module):
                 tbo_subbatch_index=tbo_subbatch_index,
             )
         )
-
+        nvtx.pop_range()
     def _forward_tbo_op_prefill_attn(self, state):
+        nvtx.push_range(f"forward_tbo_op_prefill_attn")
         state.hidden_states_after_attn = self.self_attn(
             positions=state.positions,
             hidden_states=state.pop("hidden_states_after_input_ln"),
@@ -1748,6 +1766,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 buffer_size=2, dtype=torch.float32, device="cuda"
             ),
         )
+        nvtx.pop_range()
 
     def _forward_tbo_op_decode_attn_0(self, state):
         state.self_attn_state = self.self_attn.forward_absorb_stage_prepare(
@@ -1774,7 +1793,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 buffer_size=2, dtype=torch.float32, device="cuda"
             ),
         )
-
+    @nvtx.annotate("post_attn_layernorm", color="red")
     def _forward_tbo_op_post_attn_layernorm(self, state):
         hidden_states, residual = (
             state.pop("hidden_states_after_attn"),
@@ -1812,6 +1831,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         )
 
     # TODO some logic should be in MLP, refactor this
+    @nvtx.annotate("forward_tbo_op_compute_layer_output", color="red")
     def _forward_tbo_op_compute_layer_output(self, state):
         hidden_states = state.pop("hidden_states_from_combine_without_scaling")
         residual = state.pop("residual_after_post_attn_ln")
@@ -1976,12 +1996,14 @@ class DeepseekV2Model(nn.Module):
 
         # print(
         #     f"hi [{get_tensor_model_parallel_rank()}] forward_tbo_layers gathered {hidden_states.shape=}")
+        nvtx.push_range(f"model_forward_split_inputs {hidden_states.shape=}")
         inputs_a, inputs_b = model_forward_split_inputs(
             positions=positions,
             hidden_states=hidden_states,
             forward_batch=forward_batch,
             residual=residual,
         )
+        nvtx.pop_range()
         del hidden_states, residual
 
         # print(
@@ -1994,9 +2016,10 @@ class DeepseekV2Model(nn.Module):
                 hidden_states = tensor_list[self.attn_tp_rank]
 
             return dict(hidden_states=hidden_states, residual=residual, **kwargs)
-
+        nvtx.push_range(f"postprocess_splitted_inputs {inputs_a['hidden_states'].shape=} {inputs_b['hidden_states'].shape=}")
         inputs_a = _postprocess_splitted_inputs(**inputs_a)
         inputs_b = _postprocess_splitted_inputs(**inputs_b)
+        nvtx.pop_range()
         # print(
         #     f"hi [{get_tensor_model_parallel_rank()}] forward_tbo_layers postprocessed {inputs_a['hidden_states'].shape=} {inputs_b['hidden_states'].shape=}")
 

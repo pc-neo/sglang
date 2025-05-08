@@ -117,6 +117,7 @@ from sglang.srt.utils import (
     is_cuda,
     is_hip,
 )
+from sglang.srt.managers.expert_usage_stats import expert_usage_stats
 
 import nvtx
 _is_hip = is_hip()
@@ -462,6 +463,8 @@ class DeepseekV2MoE(nn.Module):
                     layer_id=self.layer_id,
                 ),
             )
+            # 记录专家使用情况
+            expert_usage_stats.record_usage(self.layer_id, topk_idx)
         else:
             topk_idx = torch.full(
                 (0, self.top_k), -1, dtype=torch.int, device=hidden_states.device
@@ -501,6 +504,8 @@ class DeepseekV2MoE(nn.Module):
                     layer_id=self.layer_id,
                 ),
             )
+            # 记录专家使用情况
+            expert_usage_stats.record_usage(self.layer_id, topk_idx)
         else:
             topk_idx = torch.full(
                 (0, self.top_k), -1, dtype=torch.int, device=hidden_states.device

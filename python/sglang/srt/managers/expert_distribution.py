@@ -705,6 +705,7 @@ def compute_gpu_physical_count(
     )
 
 
+# 平均GPU接收Token数/最大GPU接收Token数
 def compute_utilization_rate(
     gpu_physical_count_of_batch: torch.Tensor,  # (..., num_layer, num_gpu)
 ):

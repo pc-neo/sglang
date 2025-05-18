@@ -119,7 +119,7 @@ def read_physical_count_of_forward_pass(dir_data: Path):
 
 
 def scan_combinations(
-    logical_count_of_seq: torch.Tensor,
+    logical_count_of_seq: torch.Tensor,  # (num_seq, num_layer, num_logical_expert)
     override_eplb_input_logical_count: Optional[torch.Tensor] = None,
 ):
     num_gpu_per_node = 8
@@ -196,7 +196,7 @@ def simulate_execution(
     override_eplb_input_logical_count: Optional[torch.Tensor] = None,
 ):
     model_config_for_expert_location = _MY_MODEL_CONFIG_FOR_EXPERT_LOCATION
-
+    # 模拟一个batch的token统计信息-每个token应该发给哪个logical expert
     logical_count_of_batch = simulate_batching(
         logical_count_of_seq=logical_count_of_seq,
         num_tokens_in_batch_overall=server_args.num_tokens_in_batch_overall,
@@ -232,6 +232,7 @@ def simulate_execution(
             num_physical_experts=num_physical_expert,
         )
         # print(f"hi {expert_location_metadata=}")
+        #根据输入的statistic信息，rebalance专家，把对应的token分发到物理专家
         physical_count_of_batch = simulate_logical_to_physical(
             logical_count_of_whatever=logical_count_of_batch,
             logical_to_all_physical_map=expert_location_metadata.logical_to_all_physical_map,
@@ -241,6 +242,7 @@ def simulate_execution(
     else:
         physical_count_of_batch = logical_count_of_batch
 
+    # 统计每个GPU上所有物理专家接收到的token
     gpu_physical_count_of_batch = compute_gpu_physical_count(
         physical_count_of_whatever=physical_count_of_batch,
         num_gpu=server_args.tp_size,

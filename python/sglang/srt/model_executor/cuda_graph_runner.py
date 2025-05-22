@@ -18,6 +18,7 @@ from __future__ import annotations
 import bisect
 import inspect
 import os
+import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Callable, Optional, Union
 
@@ -43,6 +44,8 @@ from sglang.srt.utils import (
     get_device_memory_capacity,
     rank0_log,
 )
+import logging
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sglang.srt.model_executor.model_runner import ModelRunner
@@ -604,14 +607,20 @@ class CudaGraphRunner:
         pp_proxy_tensors: Optional[PPProxyTensors] = None,
     ) -> Union[LogitsProcessorOutput, PPProxyTensors]:
         if not skip_attn_backend_init:
+            now = time.time()
+            logger.info(f"replay_prepare start_time{now}")
             self.replay_prepare(forward_batch, pp_proxy_tensors)
+            logger.info(f"replay_prepare use time: {time.time() - now}")
         else:
             # In speculative decoding, these two fields are still needed.
             self.input_ids[: self.raw_num_token].copy_(forward_batch.input_ids)
             self.positions[: self.raw_num_token].copy_(forward_batch.positions)
 
         # Replay
+        now = time.time()
+        logger.info(f"replay start_time{now}")
         self.graphs[self.bs].replay()
+        logger.info(f"replay use time: {time.time() - now} graphs{len(self.graphs)}")
         output = self.output_buffers[self.bs]
         if isinstance(output, LogitsProcessorOutput):
             return LogitsProcessorOutput(
